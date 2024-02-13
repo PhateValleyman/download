@@ -1,0 +1,143 @@
+# Bash funkce pro stahování a odesílání souborů ze/z dalších zařízení
+download() {
+    # Zobrazení nápovědy
+    print_help() {
+        echo "Použití: download SOUBOR [VOLBA]"
+        echo "Stažení souboru ze stávající SSH relace nebo odeslání na jiné zařízení."
+        echo ""
+        echo "Volby:"
+        echo "  -r, --remote, remote  Odeslat soubor na jiné zařízení."
+        echo "  -v, --version, version Zobrazit verzi skriptu."
+        echo "  -h, --help, help       Zobrazit tuto nápovědu."
+    }
+
+    # Zobrazení verze
+    print_version() {
+        echo "download v1.1"
+        echo "by PhateValleyman"
+        echo "Jonas.Ned@outlook.com"
+    }
+
+    # Zpracování volby
+    case "$1" in
+        -v|--version|version)
+            print_version
+            return
+            ;;
+        -h|--help|help)
+            print_help
+            return
+            ;;
+    esac
+
+    # Získání názvu souboru ze vstupního argumentu
+    file="$1"
+    
+    # Funkce pro vytvoření dočasného adresáře na zařízení s Androidem
+    create_tmp_dir() {
+        # Kontrola, zda adresář /sdcard/tmp existuje
+        if ! ssh -i "$ssh_key" root@192.168.1.15 "[ -d /sdcard/tmp ]"; then
+            # Pokud neexistuje, vytvoříme ho
+            ssh -i "$ssh_key" root@192.168.1.15 "mkdir -p /sdcard/tmp"
+            created_tmp_dir=true
+        else
+            created_tmp_dir=false
+        fi
+    }
+    
+    # Funkce pro smazání dočasného adresáře na zařízení s Androidem
+    delete_tmp_dir() {
+        if [ "$created_tmp_dir" = true ]; then
+            # Pokud byl adresář vytvořen v této relaci, můžeme ho smazat
+            ssh -i "$ssh_key" root@192.168.1.15 "rmdir /sdcard/tmp"
+            echo "Dočasný adresář /sdcard/tmp byl smazán."
+        fi
+    }
+    
+    # Funkce pro stahování souboru ze stávající SSH relace
+    download_from_session() {
+        # Zobrazení dialogu ncurses pro výběr umístění uložení souboru
+        dialog --title "Stáhnout soubor" --inputbox "Zadejte cestu k uložení souboru:" 10 60 2> /tmp/download_path
+        
+        # Načtení zadané cesty k uložení souboru
+        path=$(< /tmp/download_path)
+        
+        # Stahování souboru pomocí scp na zadanou cestu
+        scp -i "$ssh_key" root@192.168.1.20:"$file" "$path"
+        
+        # Ověření, zda stahování proběhlo úspěšně
+        if [ $? -eq 0 ]; then
+            echo "Soubor byl úspěšně stažen do $path"
+        else
+            echo "Chyba při stahování souboru."
+        fi
+        
+        # Smazání dočasného adresáře, pokud byl v této relaci vytvořen
+        delete_tmp_dir
+    }
+    
+    # Funkce pro odesílání souboru na jiná zařízení
+    send_to_device() {
+        device="$1"
+        target_dir="$2"
+        file="$3"
+
+        # Odeslání souboru pomocí scp na cílové zařízení
+        scp -i "$ssh_key" "$file" "$device":"$target_dir"
+
+        # Ověření, zda odeslání proběhlo úspěšně
+        if [ $? -eq 0 ]; then
+            echo "Soubor byl úspěšně odeslán na $device:$target_dir"
+        else
+            echo "Chyba při odesílání souboru na $device."
+        fi
+    }
+
+    # Určení cesty k SSH klíči podle platformy
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux nebo Android
+        ssh_key=~/.ssh/server
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        ssh_key=~/.ssh/server
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        # Windows s MinGW nebo Cygwin
+        ssh_key=~/.ssh/server
+    elif [[ "$OSTYPE" == "win32" ]]; then
+        # Čistý Windows
+        ssh_key=C:\Users\Valleyman\.ssh\server
+    else
+        echo "Nepodporovaný operační systém."
+        return
+    fi
+    
+    # Vytvoření dočasného adresáře na zařízení s Androidem, pokud je to potřeba
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        create_tmp_dir
+    fi
+    
+    # Zpracování přepínačů
+    case "$2" in
+        -r|--remote|remote)
+            # Odeslat soubor na jiné zařízení
+            case "$1" in
+                phone)
+                    send_to_device "root@192.168.1.15" "/sdcard" "$file"
+                    ;;
+                server)
+                    send_to_device "root@192.168.1.20" "/i-data/md0/Downloads" "$file"
+                    ;;
+                pc)
+                    send_to_device "Valleyman@192.168.1.10" "Desktop" "$file"
+                    ;;
+                *)
+                    echo "Neznámé zařízení."
+                    ;;
+            esac
+            ;;
+        *)
+            # Stáhnout soubor ze stávající SSH relace
+            download_from_session
+            ;;
+    esac
+}
